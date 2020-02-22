@@ -14,6 +14,7 @@ struct fs_state {
 	uint64_t max_refs;
 	uint64_t run_period;
 	uint64_t entity_throttle_time;
+	uint64_t entity_ops;
 	uint64_t refs_seq;
 	bool transaction_locked;
 	bool async_running;
@@ -197,6 +198,7 @@ static void nothrottle_run(struct time_simulator *s, struct entity *e)
 {
 	uint64_t refs = nr_refs();
 	state.num_entries += refs;
+	state.entity_ops++;
 	if (!state.transaction_locked)
 		entity_enqueue(s, e, state.run_period);
 }
@@ -205,6 +207,7 @@ static void async_nothrottle_run(struct time_simulator *s, struct entity *e)
 {
 	uint64_t refs = nr_refs();
 	state.num_entries += refs;
+	state.entity_ops++;
 	if (!state.transaction_locked)
 		entity_enqueue(s, e, state.run_period);
 	if (!state.async_running && need_flush(false)) {
@@ -218,6 +221,7 @@ static void throttle_run(struct time_simulator *s, struct entity *e)
 	struct normal_entity *n = container_of(e, struct normal_entity, e);
 	uint64_t refs = nr_refs();
 	state.num_entries += refs;
+	state.entity_ops++;
 
 	if (state.transaction_locked)
 		return;
@@ -273,13 +277,17 @@ static void nothrottle_test(struct time_simulator *s, int nr_workers)
 
 	printf("starting no throttle run %d workers\n", nr_workers);
 	time_simulator_run(s, 0);
-	time_simulator_clear(s);
 	printf("Transaction took %llu nanoseconds (%llu seconds) to run\n",
 	       (unsigned long long)trans_commit_entity.throttled_time,
 	       (unsigned long long)(trans_commit_entity.throttled_time /
 				    NSEC_PER_SEC));
+	printf("Entities did %f ops per second\n",
+	       (double)state.entity_ops / (s->time / NSEC_PER_SEC));
 	printf("Final average time %llu\n",
 	       (unsigned long long)state.avg_time_per_run);
+	printf("Total time %lluns (%llus)\n", (unsigned long long)s->time,
+	       (unsigned long long)(s->time / NSEC_PER_SEC));
+	time_simulator_clear(s);
 }
 
 static void async_test(struct time_simulator *s, int nr_workers)
@@ -300,17 +308,21 @@ static void async_test(struct time_simulator *s, int nr_workers)
 
 	printf("starting async no throttle run %d workers\n", nr_workers);
 	time_simulator_run(s, 0);
-	time_simulator_clear(s);
 	printf("async flusher took %llu nanoseconds (%llu seconds) to run\n",
 	       (unsigned long long)async_worker.throttled_time,
 	       (unsigned long long)(async_worker.throttled_time /
 				    NSEC_PER_SEC));
+	printf("Entities did %f ops per second\n",
+	       (double)state.entity_ops / (s->time / NSEC_PER_SEC));
 	printf("Transaction took %llu nanoseconds (%llu seconds) to run\n",
 	       (unsigned long long)trans_commit_entity.throttled_time,
 	       (unsigned long long)(trans_commit_entity.throttled_time /
 				    NSEC_PER_SEC));
 	printf("Final average time %llu\n",
 	       (unsigned long long)state.avg_time_per_run);
+	printf("Total time %lluns (%llus)\n", (unsigned long long)s->time,
+	       (unsigned long long)(s->time / NSEC_PER_SEC));
+	time_simulator_clear(s);
 }
 
 static void throttle_test(struct time_simulator *s, int nr_workers)
@@ -331,7 +343,6 @@ static void throttle_test(struct time_simulator *s, int nr_workers)
 
 	printf("starting throttle run %d workers\n", nr_workers);
 	time_simulator_run(s, 0);
-	time_simulator_clear(s);
 	printf("async flusher took %llu nanoseconds (%llu seconds) to run\n",
 	       (unsigned long long)async_worker.throttled_time,
 	       (unsigned long long)(async_worker.throttled_time /
@@ -340,11 +351,16 @@ static void throttle_test(struct time_simulator *s, int nr_workers)
 	       (unsigned long long)trans_commit_entity.throttled_time,
 	       (unsigned long long)(trans_commit_entity.throttled_time /
 				    NSEC_PER_SEC));
+	printf("Entities did %f ops per second\n",
+	       (double)state.entity_ops / (s->time / NSEC_PER_SEC));
 	printf("Entities were throttled %llu nanoseconds (%llu seconds)\n",
 	       (unsigned long long)state.entity_throttle_time,
 	       (unsigned long long)state.entity_throttle_time / NSEC_PER_SEC);
 	printf("Final average time %llu\n",
 	       (unsigned long long)state.avg_time_per_run);
+	printf("Total time %lluns (%llus)\n", (unsigned long long)s->time,
+	       (unsigned long long)(s->time / NSEC_PER_SEC));
+	time_simulator_clear(s);
 }
 
 int main(int argc, char **argv)
@@ -360,10 +376,15 @@ int main(int argc, char **argv)
 	}
 
 	nothrottle_test(s, 1);
+	printf("\n");
 	nothrottle_test(s, 10);
+	printf("\n");
 	async_test(s, 1);
+	printf("\n");
 	async_test(s, 10);
+	printf("\n");
 	throttle_test(s, 1);
+	printf("\n");
 	throttle_test(s, 10);
 	free_entities();
 	free(s);
