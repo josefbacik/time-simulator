@@ -82,9 +82,10 @@ void time_simulator_run(struct time_simulator *s, uint64_t time)
 	struct rb_node *n;
 	struct entity *e;
 
-	time += s->time;
+	if (time)
+		time += s->time;
 	s->running = true;
-	while (s->time <= time) {
+	while (!time || (s->time <= time)) {
 		run_entities(s);
 		n = rb_first(&s->entities);
 		if (!n)
