@@ -9,6 +9,7 @@ LT_INIT
 # Checks for programs.
 AC_PROG_CC
 AC_PROG_CC_STDC
+CFLAGS+=" -Werror -Wall"
 
 # Checks for header files.
 AC_CHECK_HEADERS([stdint.h stdlib.h])

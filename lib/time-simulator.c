@@ -24,7 +24,10 @@ static void tree_insert(struct time_simulator *s, struct entity *e)
 void entity_enqueue(struct time_simulator *s, struct entity *e, uint64_t delta)
 {
 	e->wake_time = s->time + delta;
-	tree_insert(s, e);
+	if (!s->running || delta)
+		tree_insert(s, e);
+	else
+		list_add_tail(&e->list, &s->resched);
 }
 
 struct time_simulator *time_simulator_alloc(void)
@@ -33,17 +36,26 @@ struct time_simulator *time_simulator_alloc(void)
 	if (!s)
 		return NULL;
 	s->entities = RB_ROOT;
+	INIT_LIST_HEAD(&s->resched);
 	return s;
 }
 
-struct entity *entity_alloc(void)
+void entity_init(struct entity *e)
 {
-	struct entity *e = calloc(1, sizeof(struct entity));
-	if (!e)
-		return NULL;
 	RB_CLEAR_NODE(&e->n);
 	INIT_LIST_HEAD(&e->list);
-	return e;
+}
+
+void time_simulator_clear(struct time_simulator *s)
+{
+	struct rb_node *n;
+
+	while ((n = rb_first(&s->entities)))
+		rb_erase(n, &s->entities);
+
+	while (!list_empty(&s->resched))
+		list_del_init(s->resched.next);
+	s->time = 0;
 }
 
 static void run_entities(struct time_simulator *s)
@@ -52,9 +64,11 @@ static void run_entities(struct time_simulator *s)
 	struct entity *e, *tmp;
 
 	while ((n = rb_first(&s->entities))) {
-		rb_erase(n, &s->entities);
 		e = rb_entry(n, struct entity, n);
-		e->ops->run(s, e);
+		if (e->wake_time > s->time)
+			break;
+		rb_erase(n, &s->entities);
+		e->run(s, e);
 	}
 
 	list_for_each_entry_safe(e, tmp, &s->resched, list) {
@@ -69,7 +83,8 @@ void time_simulator_run(struct time_simulator *s, uint64_t time)
 	struct entity *e;
 
 	time += s->time;
-	while (time <= s->time) {
+	s->running = true;
+	while (s->time <= time) {
 		run_entities(s);
 		n = rb_first(&s->entities);
 		if (!n)
@@ -80,4 +95,5 @@ void time_simulator_run(struct time_simulator *s, uint64_t time)
 		if (e->wake_time > s->time)
 			s->time = e->wake_time;
 	}
+	s->running = false;
 }
