@@ -14,6 +14,7 @@ struct fs_state {
 	uint64_t max_refs;
 	uint64_t run_period;
 	uint64_t entity_throttle_time;
+	uint64_t refs_seq;
 	bool transaction_locked;
 	bool async_running;
 };
@@ -27,6 +28,7 @@ struct normal_entity {
 	uint64_t flush_time;
 	uint64_t flushed;
 
+	struct list_head s;
 	struct list_head l;
 };
 
@@ -41,6 +43,7 @@ static struct normal_entity *alloc_entity(void)
 	struct normal_entity *n = calloc(1, sizeof(struct normal_entity));
 	entity_init(&n->e);
 	INIT_LIST_HEAD(&n->l);
+	INIT_LIST_HEAD(&n->s);
 	list_add_tail(&n->l, &entities);
 	return n;
 }
@@ -53,12 +56,6 @@ static void free_entities(void)
 		list_del_init(&n->l);
 		free(n);
 	}
-	while (!list_empty(&sleepers)) {
-		struct normal_entity *n =
-			list_first_entry(&sleepers, struct normal_entity, l);
-		list_del_init(&n->l);
-		free(n);
-	}
 }
 
 static void enqueue_sleeping_tasks(struct time_simulator *s)
@@ -67,7 +64,7 @@ static void enqueue_sleeping_tasks(struct time_simulator *s)
 
 	while (!list_empty(&sleepers)) {
 		struct normal_entity *n =
-			list_first_entry(&sleepers, struct normal_entity, l);
+			list_first_entry(&sleepers, struct normal_entity, s);
 		list_del_init(&n->l);
 		entity_enqueue(s, &n->e, 1);
 		woken = true;
@@ -76,6 +73,20 @@ static void enqueue_sleeping_tasks(struct time_simulator *s)
 	if (woken)
 		entity_enqueue(s, &trans_commit_entity.e,
 			       (uint64_t)NSEC_PER_SEC * 30);
+}
+
+static void wakeup_refs_waiters(struct time_simulator *sim)
+{
+	struct normal_entity *n, *tmp;
+
+	list_for_each_entry_safe(n, tmp, &sleepers, s) {
+		if (n->nr_to_flush == state.refs_seq) {
+			list_del_init(&n->s);
+			state.entity_throttle_time += sim->time - n->flush_time;
+			if (!state.transaction_locked)
+				entity_enqueue(sim, &n->e, state.run_period);
+		}
+	}
 }
 
 static bool need_flush(bool throttle)
@@ -107,7 +118,9 @@ static int do_flushing(struct time_simulator *s, struct normal_entity *n)
 	n->throttled_time += time;
 	n->flush_time += time;
 	n->flushed++;
+	state.refs_seq++;
 
+	wakeup_refs_waiters(s);
 	entity_enqueue(s, &n->e, time);
 	return 0;
 }
@@ -130,7 +143,6 @@ static void transaction_run(struct time_simulator *s, struct entity *e)
 		n->flush_time = 0;
 		n->flushed = 0;
 		n->state++;
-		printf("going to flush %llu\n", (unsigned long long)n->nr_to_flush);
 	}
 
 	if (n->state == 1 && do_flushing(s, n)) {
@@ -162,7 +174,6 @@ static void async_flusher_run(struct time_simulator *s, struct entity *e)
 		n->flush_time = 0;
 		n->flushed = 0;
 		n->state++;
-		printf("async going to flush %llu\n", (unsigned long long)n->nr_to_flush);
 	}
 
 	if (n->state == 1 && do_flushing(s, n)) {
@@ -199,6 +210,27 @@ static void async_nothrottle_run(struct time_simulator *s, struct entity *e)
 	if (!state.async_running && need_flush(false)) {
 		state.async_running = true;
 		entity_enqueue(s, &async_worker.e, 1);
+	}
+}
+
+static void throttle_run(struct time_simulator *s, struct entity *e)
+{
+	struct normal_entity *n = container_of(e, struct normal_entity, e);
+	uint64_t refs = nr_refs();
+	state.num_entries += refs;
+
+	if (state.transaction_locked)
+		return;
+	if (need_flush(false)) {
+		if (!state.async_running) {
+			state.async_running = true;
+			entity_enqueue(s, &async_worker.e, 1);
+		}
+		n->flush_time = s->time;
+		n->nr_to_flush = state.refs_seq + refs;
+		list_add_tail(&n->s, &sleepers);
+	} else {
+		entity_enqueue(s, e, state.run_period);
 	}
 }
 
@@ -281,6 +313,40 @@ static void async_test(struct time_simulator *s, int nr_workers)
 	       (unsigned long long)state.avg_time_per_run);
 }
 
+static void throttle_test(struct time_simulator *s, int nr_workers)
+{
+	int i;
+
+	init_state(s);
+	init_async_worker();
+	for (i = 0; i < nr_workers; i++) {
+		struct normal_entity *n = alloc_entity();
+		if (!n) {
+			fprintf(stderr, "Could only allocate %d workers\n", i);
+			break;
+		}
+		n->e.run = throttle_run;
+		entity_enqueue(s, &n->e, 0);
+	}
+
+	printf("starting throttle run %d workers\n", nr_workers);
+	time_simulator_run(s, 0);
+	time_simulator_clear(s);
+	printf("async flusher took %llu nanoseconds (%llu seconds) to run\n",
+	       (unsigned long long)async_worker.throttled_time,
+	       (unsigned long long)(async_worker.throttled_time /
+				    NSEC_PER_SEC));
+	printf("Transaction took %llu nanoseconds (%llu seconds) to run\n",
+	       (unsigned long long)trans_commit_entity.throttled_time,
+	       (unsigned long long)(trans_commit_entity.throttled_time /
+				    NSEC_PER_SEC));
+	printf("Entities were throttled %llu nanoseconds (%llu seconds)\n",
+	       (unsigned long long)state.entity_throttle_time,
+	       (unsigned long long)state.entity_throttle_time / NSEC_PER_SEC);
+	printf("Final average time %llu\n",
+	       (unsigned long long)state.avg_time_per_run);
+}
+
 int main(int argc, char **argv)
 {
 	struct time_simulator *s;
@@ -297,6 +363,8 @@ int main(int argc, char **argv)
 	nothrottle_test(s, 10);
 	async_test(s, 1);
 	async_test(s, 10);
+	throttle_test(s, 1);
+	throttle_test(s, 10);
 	free_entities();
 	free(s);
 	return 0;
