@@ -306,13 +306,12 @@ static void init_async_worker(void)
 
 static void run_test(struct time_simulator *s, const char *testname,
 		     void(*run)(struct time_simulator *s, struct entity *e),
-		     bool async, int nr_workers)
+		     int nr_workers)
 {
 	int i;
 
 	init_state(s);
-	if (async)
-		init_async_worker();
+	init_async_worker();
 	for (i = 0; i < nr_workers; i++) {
 		struct normal_entity *n = alloc_entity();
 		if (!n) {
@@ -375,14 +374,14 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	run_test(s, "nothrottle", nothrottle_run, false, 1);
-	run_test(s, "nothrottle", nothrottle_run, false, 10);
-	run_test(s, "async nothrottle", async_nothrottle_run, true, 1);
-	run_test(s, "async nothrottle", async_nothrottle_run, true, 10);
-	run_test(s, "inline", inline_refs_run, false, 1);
-	run_test(s, "inline", inline_refs_run, false, 10);
-	run_test(s, "throttle", throttle_run, true, 10);
-	run_test(s, "throttle", throttle_run, true, 10);
+	run_test(s, "nothrottle", nothrottle_run, 1);
+	run_test(s, "nothrottle", nothrottle_run, 10);
+	run_test(s, "async nothrottle", async_nothrottle_run, 1);
+	run_test(s, "async nothrottle", async_nothrottle_run, 10);
+	run_test(s, "inline", inline_refs_run, 1);
+	run_test(s, "inline", inline_refs_run, 10);
+	run_test(s, "throttle", throttle_run, 10);
+	run_test(s, "throttle", throttle_run, 10);
 	free_entities();
 	free(s);
 	return 0;
