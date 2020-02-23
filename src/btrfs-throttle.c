@@ -99,7 +99,7 @@ static bool need_flush(bool throttle)
 		return true;
 	if (!throttle)
 		return false;
-	return (time >= (NSEC_PER_SEC >> 2));
+	return (time >= (NSEC_PER_SEC >> 1));
 }
 
 static int do_flushing(struct time_simulator *s, struct normal_entity *n)
@@ -176,7 +176,7 @@ static void async_flusher_run(struct time_simulator *s, struct entity *e)
 			state.async_running = false;
 			return;
 		}
-		n->nr_to_flush = state.num_entries >> 2;
+		n->nr_to_flush = state.num_entries >> 1;
 		if (!n->nr_to_flush) {
 			state.async_running = false;
 			return;
@@ -255,7 +255,7 @@ static void throttle_run(struct time_simulator *s, struct entity *e)
 
 	if (state.transaction_locked)
 		return;
-
+/*
 	if (need_flush(true)) {
 		if (!state.async_running) {
 			state.async_running = true;
@@ -263,15 +263,17 @@ static void throttle_run(struct time_simulator *s, struct entity *e)
 			printf("waking up worker at %llu\n", (unsigned long long)(s->time + 1));
 		}
 	}
-
+*/
 	if (need_flush(false)) {
-		uint64_t max_refs = (NSEC_PER_SEC >> 1) / state.avg_time_per_run;
+//		uint64_t max_refs = (NSEC_PER_SEC >> 1) / state.avg_time_per_run;
 		if (!state.async_running) {
 			state.async_running = true;
 			entity_enqueue(s, &async_worker.e, 1);
 		}
+		/*
 		if (refs > max_refs)
 			refs = max_refs;
+		*/
 		if (refs == 0)
 			refs = 1;
 		n->flush_time = s->time;
@@ -380,7 +382,7 @@ int main(int argc, char **argv)
 	run_test(s, "async nothrottle", async_nothrottle_run, 10);
 	run_test(s, "inline", inline_refs_run, 1);
 	run_test(s, "inline", inline_refs_run, 10);
-	run_test(s, "throttle", throttle_run, 10);
+	run_test(s, "throttle", throttle_run, 1);
 	run_test(s, "throttle", throttle_run, 10);
 	free_entities();
 	free(s);
