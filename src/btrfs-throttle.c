@@ -255,25 +255,12 @@ static void throttle_run(struct time_simulator *s, struct entity *e)
 
 	if (state.transaction_locked)
 		return;
-/*
-	if (need_flush(true)) {
-		if (!state.async_running) {
-			state.async_running = true;
-			entity_enqueue(s, &async_worker.e, 1);
-			printf("waking up worker at %llu\n", (unsigned long long)(s->time + 1));
-		}
-	}
-*/
+
 	if (need_flush(false)) {
-//		uint64_t max_refs = (NSEC_PER_SEC >> 1) / state.avg_time_per_run;
 		if (!state.async_running) {
 			state.async_running = true;
 			entity_enqueue(s, &async_worker.e, 1);
 		}
-		/*
-		if (refs > max_refs)
-			refs = max_refs;
-		*/
 		if (refs == 0)
 			refs = 1;
 		n->flush_time = s->time;
@@ -297,6 +284,34 @@ static void init_state(struct time_simulator *s)
 	trans_commit_entity.e.run = transaction_run;
 
 	entity_enqueue(s, &trans_commit_entity.e, (uint64_t)NSEC_PER_SEC * 30);
+}
+
+static void test_run(struct time_simulator *s, struct entity *e)
+{
+	struct normal_entity *n = container_of(e, struct normal_entity, e);
+	uint64_t refs = nr_refs();
+	state.num_entries += refs;
+	state.entity_ops++;
+
+	if (state.transaction_locked)
+		return;
+
+	if (need_flush(true)) {
+		if (!state.async_running) {
+			state.async_running = true;
+			entity_enqueue(s, &async_worker.e, 1);
+		}
+	}
+
+	if (need_flush(false)) {
+		if (refs == 0)
+			refs = 1;
+		n->flush_time = s->time;
+		n->nr_to_flush = state.refs_seq + refs;
+		list_add_tail(&n->s, &sleepers);
+	} else {
+		entity_enqueue(s, e, state.run_period);
+	}
 }
 
 static void init_async_worker(void)
@@ -382,8 +397,12 @@ int main(int argc, char **argv)
 	run_test(s, "async nothrottle", async_nothrottle_run, 10);
 	run_test(s, "inline", inline_refs_run, 1);
 	run_test(s, "inline", inline_refs_run, 10);
-	run_test(s, "throttle", throttle_run, 1);
-	run_test(s, "throttle", throttle_run, 10);
+	srandom(1);
+	run_test(s, "baseline throttle", throttle_run, 1);
+	run_test(s, "baseline throttle", throttle_run, 10);
+	srandom(1);
+	run_test(s, "test", test_run, 1);
+	run_test(s, "test", test_run, 10);
 	free_entities();
 	free(s);
 	return 0;
