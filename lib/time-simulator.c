@@ -102,7 +102,7 @@ void time_simulator_print_entity_times(struct time_simulator *s)
 {
 	struct entity *e;
 	list_for_each_entry(e, &s->entity_list, main_list) {
-		printf("\tentity spent %lluns(%llus) running %lluns(%llus sleeping)\n",
+		printf("\tentity spent %lluns(%llus) running %lluns(%llus) sleeping\n",
 		       (unsigned long long)e->run_time,
 		       (unsigned long long)(e->run_time / NSEC_PER_SEC),
 		       (unsigned long long)e->sleep_time,
