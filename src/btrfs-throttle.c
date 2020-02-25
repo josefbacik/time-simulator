@@ -72,6 +72,17 @@ static void enqueue_sleeping_tasks(struct time_simulator *s)
 			       (uint64_t)NSEC_PER_SEC * 30);
 }
 */
+static bool need_flush(bool throttle)
+{
+	uint64_t time = state.num_entries * state.avg_time_per_run;
+
+	if (time >= NSEC_PER_SEC)
+		return true;
+	if (!throttle)
+		return false;
+	return (time >= (NSEC_PER_SEC >> 1));
+}
+
 static uint64_t wake_sleeper(struct time_simulator *s, struct entity *e)
 {
 	struct normal_entity *n = container_of(e, struct normal_entity, e);
@@ -85,20 +96,9 @@ static uint64_t test_wake_sleeper(struct time_simulator *s, struct entity *e)
 {
 	struct normal_entity *n = container_of(e, struct normal_entity, e);
 
-	if (state.num_entries == 0 || n->nr_to_flush == state.refs_seq)
+	if (need_flush(false) || n->nr_to_flush == state.refs_seq)
 		return state.run_period;
 	return UINT64_MAX;
-}
-
-static bool need_flush(bool throttle)
-{
-	uint64_t time = state.num_entries * state.avg_time_per_run;
-
-	if (time >= NSEC_PER_SEC)
-		return true;
-	if (!throttle)
-		return false;
-	return (time >= (NSEC_PER_SEC >> 1));
 }
 
 static int do_flushing(struct time_simulator *s, struct normal_entity *n)
