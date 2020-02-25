@@ -83,6 +83,17 @@ static bool need_flush(bool throttle)
 	return (time >= (NSEC_PER_SEC >> 1));
 }
 
+static bool need_flush_test(bool throttle)
+{
+	uint64_t time = state.num_entries * state.avg_time_per_run;
+
+	if (time >= NSEC_PER_SEC)
+		return true;
+	if (!throttle)
+		return false;
+	return (time >= (NSEC_PER_SEC >> 2));
+}
+
 static uint64_t wake_sleeper(struct time_simulator *s, struct entity *e)
 {
 	struct normal_entity *n = container_of(e, struct normal_entity, e);
@@ -96,7 +107,7 @@ static uint64_t test_wake_sleeper(struct time_simulator *s, struct entity *e)
 {
 	struct normal_entity *n = container_of(e, struct normal_entity, e);
 
-	if (need_flush(false) || n->nr_to_flush == state.refs_seq)
+	if (need_flush_test(false) || n->nr_to_flush == state.refs_seq)
 		return state.run_period;
 	return UINT64_MAX;
 }
@@ -203,7 +214,7 @@ static void async_flusher_run_test(struct time_simulator *s, struct entity *e)
 			state.async_running = false;
 			return;
 		}
-		if (!need_flush(true)) {
+		if (!need_flush_test(true)) {
 			state.async_running = false;
 			return;
 		}
@@ -328,14 +339,14 @@ static void test_run(struct time_simulator *s, struct entity *e)
 	if (state.transaction_locked)
 		return;
 
-	if (need_flush(true)) {
+	if (need_flush_test(true)) {
 		if (!state.async_running) {
 			state.async_running = true;
 			entity_enqueue(s, &async_worker.e, 1);
 		}
 	}
 
-	if (need_flush(false)) {
+	if (need_flush_test(false)) {
 		if (refs == 0)
 			refs = 1;
 		n->flush_time = s->time;
