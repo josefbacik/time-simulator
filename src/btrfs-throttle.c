@@ -18,6 +18,7 @@ struct fs_state {
 	uint64_t refs_seq;
 	bool transaction_locked;
 	bool async_running;
+	bool test;
 };
 
 struct normal_entity {
@@ -80,6 +81,15 @@ static uint64_t wake_sleeper(struct time_simulator *s, struct entity *e)
 	return UINT64_MAX;
 }
 
+static uint64_t test_wake_sleeper(struct time_simulator *s, struct entity *e)
+{
+	struct normal_entity *n = container_of(e, struct normal_entity, e);
+
+	if (state.num_entries == 0 || n->nr_to_flush == state.refs_seq)
+		return state.run_period;
+	return UINT64_MAX;
+}
+
 static bool need_flush(bool throttle)
 {
 	uint64_t time = state.num_entries * state.avg_time_per_run;
@@ -109,7 +119,10 @@ static int do_flushing(struct time_simulator *s, struct normal_entity *n)
 	n->flushed++;
 	state.refs_seq++;
 
-	time_simulator_wake(s, wake_sleeper);
+	if (state.test)
+		time_simulator_wake(s, test_wake_sleeper);
+	else
+		time_simulator_wake(s, wake_sleeper);
 	entity_enqueue(s, &n->e, time);
 	return 0;
 }
@@ -152,6 +165,36 @@ static void transaction_run(struct time_simulator *s, struct entity *e)
 }
 
 static void async_flusher_run(struct time_simulator *s, struct entity *e)
+{
+	struct normal_entity *n = container_of(e, struct normal_entity, e);
+
+	if (n->state == 0) {
+		if (state.transaction_locked) {
+			state.async_running = false;
+			return;
+		}
+		if (!need_flush(true)) {
+			state.async_running = false;
+			return;
+		}
+		n->nr_to_flush = state.num_entries >> 1;
+		if (!n->nr_to_flush) {
+			state.async_running = false;
+			return;
+		}
+		n->flush_time = 0;
+		n->flushed = 0;
+		n->state++;
+	}
+
+	if (n->state == 1 && do_flushing(s, n)) {
+		calc_avg_time(n->flush_time, n->flushed);
+		n->state = 0;
+		entity_enqueue(s, e, 1);
+	}
+}
+
+static void async_flusher_run_test(struct time_simulator *s, struct entity *e)
 {
 	struct normal_entity *n = container_of(e, struct normal_entity, e);
 
@@ -259,13 +302,14 @@ static void throttle_run(struct time_simulator *s, struct entity *e)
 	}
 }
 
-static void init_state(struct time_simulator *s)
+static void init_state(struct time_simulator *s, bool test)
 {
 	memset(&state, 0, sizeof(state));
 	state.min_refs = 0;
 	state.max_refs = 20;
 	state.run_period = NSEC_PER_SEC >> 4;
 	state.avg_time_per_run = NSEC_PER_SEC >> 4;
+	state.test = test;
 
 	memset(&trans_commit_entity, 0, sizeof(trans_commit_entity));
 	entity_init(s, &trans_commit_entity.e);
@@ -302,21 +346,24 @@ static void test_run(struct time_simulator *s, struct entity *e)
 	}
 }
 
-static void init_async_worker(struct time_simulator *s)
+static void init_async_worker(struct time_simulator *s, bool test)
 {
 	memset(&async_worker, 0, sizeof(async_worker));
 	entity_init(s, &async_worker.e);
-	async_worker.e.run = async_flusher_run;
+	if (test)
+		async_worker.e.run = async_flusher_run_test;
+	else
+		async_worker.e.run = async_flusher_run;
 }
 
 static void run_test(struct time_simulator *s, const char *testname,
 		     void(*run)(struct time_simulator *s, struct entity *e),
-		     int nr_workers)
+		     int nr_workers, bool test)
 {
 	int i;
 
-	init_state(s);
-	init_async_worker(s);
+	init_state(s, test);
+	init_async_worker(s, test);
 	for (i = 0; i < nr_workers; i++) {
 		struct normal_entity *n = alloc_entity(s);
 		if (!n) {
@@ -378,18 +425,18 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	run_test(s, "nothrottle", nothrottle_run, 1);
-	run_test(s, "nothrottle", nothrottle_run, 10);
-	run_test(s, "async nothrottle", async_nothrottle_run, 1);
-	run_test(s, "async nothrottle", async_nothrottle_run, 10);
-	run_test(s, "inline", inline_refs_run, 1);
-	run_test(s, "inline", inline_refs_run, 10);
+	run_test(s, "nothrottle", nothrottle_run, 1, false);
+	run_test(s, "nothrottle", nothrottle_run, 10, false);
+	run_test(s, "async nothrottle", async_nothrottle_run, 1, false);
+	run_test(s, "async nothrottle", async_nothrottle_run, 10, false);
+	run_test(s, "inline", inline_refs_run, 1, false);
+	run_test(s, "inline", inline_refs_run, 10, false);
 	srandom(1);
-	run_test(s, "baseline throttle", throttle_run, 1);
-	run_test(s, "baseline throttle", throttle_run, 10);
+	run_test(s, "baseline throttle", throttle_run, 1, false);
+	run_test(s, "baseline throttle", throttle_run, 10, false);
 	srandom(1);
-	run_test(s, "test", test_run, 1);
-	run_test(s, "test", test_run, 10);
+	run_test(s, "test", test_run, 1, true);
+	run_test(s, "test", test_run, 10, true);
 	free(s);
 	return 0;
 }
