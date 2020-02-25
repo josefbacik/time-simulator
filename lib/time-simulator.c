@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <time-simulator.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 static void tree_insert(struct time_simulator *s, struct entity *e)
 {
@@ -97,6 +98,18 @@ void time_simulator_clear(struct time_simulator *s)
 	s->time = 0;
 }
 
+void time_simulator_print_entity_times(struct time_simulator *s)
+{
+	struct entity *e;
+	list_for_each_entry(e, &s->entity_list, main_list) {
+		printf("\tentity spent %lluns(%llus) running %lluns(%llus sleeping)\n",
+		       (unsigned long long)e->run_time,
+		       (unsigned long long)(e->run_time / NSEC_PER_SEC),
+		       (unsigned long long)e->sleep_time,
+		       (unsigned long long)(e->sleep_time / NSEC_PER_SEC));
+	}
+}
+
 static void run_entities(struct time_simulator *s)
 {
 	struct rb_node *n;
@@ -107,6 +120,7 @@ static void run_entities(struct time_simulator *s)
 		if (e->wake_time > s->time)
 			break;
 		rb_erase(n, &s->entities);
+		e->run_time += s->time - e->start_time;
 		e->run(s, e);
 	}
 

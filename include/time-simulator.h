@@ -50,4 +50,5 @@ void time_simulator_wake(struct time_simulator *s,
 void entity_init(struct time_simulator *s, struct entity *e);
 void entity_enqueue(struct time_simulator *s, struct entity *e, uint64_t delta);
 void entity_sleep(struct time_simulator *s, struct entity *e);
+void time_simulator_print_entity_times(struct time_simulator *s);
 #endif /* _TIME_SIMULATOR_H */

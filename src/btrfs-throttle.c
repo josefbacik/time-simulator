@@ -341,13 +341,12 @@ static void run_test(struct time_simulator *s, const char *testname,
 	       (double)state.entity_ops / (s->time / NSEC_PER_SEC));
 	printf("Theoretical max %f ops per second\n",
 	       (double)NSEC_PER_SEC / state.run_period);
-	printf("Entities were throttled %llu nanoseconds (%llu seconds)\n",
-	       (unsigned long long)state.entity_throttle_time,
-	       (unsigned long long)state.entity_throttle_time / NSEC_PER_SEC);
 	printf("Final average time %llu\n",
 	       (unsigned long long)state.avg_time_per_run);
-	printf("Total time %lluns (%llus)\n\n", (unsigned long long)s->time,
+	printf("Total time %lluns (%llus)\n", (unsigned long long)s->time,
 	       (unsigned long long)(s->time / NSEC_PER_SEC));
+	time_simulator_print_entity_times(s);
+	printf("\n");
 	time_simulator_clear(s);
 }
 
