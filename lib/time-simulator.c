@@ -55,7 +55,8 @@ void time_simulator_wake(struct time_simulator *s,
 	}
 }
 
-struct time_simulator *time_simulator_alloc(void)
+struct time_simulator *
+time_simulator_alloc(void (*free_entity)(struct entity *entity))
 {
 	struct time_simulator *s = calloc(1, sizeof(struct time_simulator));
 	if (!s)
@@ -63,13 +64,16 @@ struct time_simulator *time_simulator_alloc(void)
 	s->entities = RB_ROOT;
 	INIT_LIST_HEAD(&s->resched);
 	INIT_LIST_HEAD(&s->sleepers);
+	INIT_LIST_HEAD(&s->entity_list);
+	s->free_entity = free_entity;
 	return s;
 }
 
-void entity_init(struct entity *e)
+void entity_init(struct time_simulator *s, struct entity *e)
 {
 	RB_CLEAR_NODE(&e->n);
 	INIT_LIST_HEAD(&e->list);
+	list_add_tail(&e->main_list, &s->entity_list);
 }
 
 void time_simulator_clear(struct time_simulator *s)
@@ -83,6 +87,13 @@ void time_simulator_clear(struct time_simulator *s)
 		list_del_init(s->resched.next);
 	while (!list_empty(&s->sleepers))
 		list_del_init(s->sleepers.next);
+	while (!list_empty(&s->entity_list)) {
+		struct entity *e = list_first_entry(&s->entity_list,
+						    struct entity,
+						    main_list);
+		list_del_init(&e->main_list);
+		s->free_entity(e);
+	}
 	s->time = 0;
 }
 

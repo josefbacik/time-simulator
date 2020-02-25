@@ -32,30 +32,27 @@ struct normal_entity {
 	struct list_head l;
 };
 
-static LIST_HEAD(entities);
 static struct fs_state state;
 static struct normal_entity trans_commit_entity;
 static struct normal_entity async_worker;
 static uint64_t percentile_table[100];
 
-static struct normal_entity *alloc_entity(void)
+static struct normal_entity *alloc_entity(struct time_simulator *s)
 {
 	struct normal_entity *n = calloc(1, sizeof(struct normal_entity));
-	entity_init(&n->e);
-	INIT_LIST_HEAD(&n->l);
-	list_add_tail(&n->l, &entities);
+	entity_init(s, &n->e);
 	return n;
 }
 
-static void free_entities(void)
+static void free_entity(struct entity *e)
 {
-	while (!list_empty(&entities)) {
-		struct normal_entity *n =
-			list_first_entry(&entities, struct normal_entity, l);
-		list_del_init(&n->l);
-		free(n);
-	}
+	struct normal_entity *n = container_of(e, struct normal_entity, e);
+
+	if (n == &async_worker || n == &trans_commit_entity)
+		return;
+	free(n);
 }
+
 /*
 static void enqueue_sleeping_tasks(struct time_simulator *s)
 {
@@ -271,7 +268,7 @@ static void init_state(struct time_simulator *s)
 	state.avg_time_per_run = NSEC_PER_SEC >> 4;
 
 	memset(&trans_commit_entity, 0, sizeof(trans_commit_entity));
-	entity_init(&trans_commit_entity.e);
+	entity_init(s, &trans_commit_entity.e);
 	trans_commit_entity.e.run = transaction_run;
 
 	entity_enqueue(s, &trans_commit_entity.e, (uint64_t)NSEC_PER_SEC * 30);
@@ -305,10 +302,10 @@ static void test_run(struct time_simulator *s, struct entity *e)
 	}
 }
 
-static void init_async_worker(void)
+static void init_async_worker(struct time_simulator *s)
 {
 	memset(&async_worker, 0, sizeof(async_worker));
-	entity_init(&async_worker.e);
+	entity_init(s, &async_worker.e);
 	async_worker.e.run = async_flusher_run;
 }
 
@@ -319,9 +316,9 @@ static void run_test(struct time_simulator *s, const char *testname,
 	int i;
 
 	init_state(s);
-	init_async_worker();
+	init_async_worker(s);
 	for (i = 0; i < nr_workers; i++) {
-		struct normal_entity *n = alloc_entity();
+		struct normal_entity *n = alloc_entity(s);
 		if (!n) {
 			fprintf(stderr, "Could only allocate %d workers\n", i);
 			break;
@@ -376,7 +373,7 @@ int main(int argc, char **argv)
 
 	init_percentile_table(NSEC_PER_SEC >> 1);
 
-	s = time_simulator_alloc();
+	s = time_simulator_alloc(free_entity);
 	if (!s) {
 		perror("Error allocating time simulator\n");
 		return -1;
@@ -394,7 +391,6 @@ int main(int argc, char **argv)
 	srandom(1);
 	run_test(s, "test", test_run, 1);
 	run_test(s, "test", test_run, 10);
-	free_entities();
 	free(s);
 	return 0;
 }
