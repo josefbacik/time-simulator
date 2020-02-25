@@ -29,12 +29,10 @@ struct normal_entity {
 	uint64_t flush_time;
 	uint64_t flushed;
 
-	struct list_head s;
 	struct list_head l;
 };
 
 static LIST_HEAD(entities);
-static LIST_HEAD(sleepers);
 static struct fs_state state;
 static struct normal_entity trans_commit_entity;
 static struct normal_entity async_worker;
@@ -45,7 +43,6 @@ static struct normal_entity *alloc_entity(void)
 	struct normal_entity *n = calloc(1, sizeof(struct normal_entity));
 	entity_init(&n->e);
 	INIT_LIST_HEAD(&n->l);
-	INIT_LIST_HEAD(&n->s);
 	list_add_tail(&n->l, &entities);
 	return n;
 }
@@ -77,18 +74,13 @@ static void enqueue_sleeping_tasks(struct time_simulator *s)
 			       (uint64_t)NSEC_PER_SEC * 30);
 }
 */
-static void wakeup_refs_waiters(struct time_simulator *sim)
+static uint64_t wake_sleeper(struct time_simulator *s, struct entity *e)
 {
-	struct normal_entity *n, *tmp;
+	struct normal_entity *n = container_of(e, struct normal_entity, e);
 
-	list_for_each_entry_safe(n, tmp, &sleepers, s) {
-		if (state.num_entries == 0 || n->nr_to_flush == state.refs_seq) {
-			list_del_init(&n->s);
-			state.entity_throttle_time += sim->time - n->flush_time;
-			if (!state.transaction_locked)
-				entity_enqueue(sim, &n->e, state.run_period);
-		}
-	}
+	if (state.num_entries == 0 || n->nr_to_flush == state.refs_seq)
+		return state.run_period;
+	return UINT64_MAX;
 }
 
 static bool need_flush(bool throttle)
@@ -108,7 +100,6 @@ static int do_flushing(struct time_simulator *s, struct normal_entity *n)
 
 	if (!state.num_entries || !n->nr_to_flush) {
 		n->nr_to_flush = 0;
-		wakeup_refs_waiters(s);
 		return 1;
 	}
 
@@ -121,7 +112,7 @@ static int do_flushing(struct time_simulator *s, struct normal_entity *n)
 	n->flushed++;
 	state.refs_seq++;
 
-	wakeup_refs_waiters(s);
+	time_simulator_wake(s, wake_sleeper);
 	entity_enqueue(s, &n->e, time);
 	return 0;
 }
@@ -265,7 +256,7 @@ static void throttle_run(struct time_simulator *s, struct entity *e)
 			refs = 1;
 		n->flush_time = s->time;
 		n->nr_to_flush = state.refs_seq + refs;
-		list_add_tail(&n->s, &sleepers);
+		entity_sleep(s, &n->e);
 	} else {
 		entity_enqueue(s, e, state.run_period);
 	}
@@ -308,7 +299,7 @@ static void test_run(struct time_simulator *s, struct entity *e)
 			refs = 1;
 		n->flush_time = s->time;
 		n->nr_to_flush = state.refs_seq + refs;
-		list_add_tail(&n->s, &sleepers);
+		entity_sleep(s, e);
 	} else {
 		entity_enqueue(s, e, state.run_period);
 	}
